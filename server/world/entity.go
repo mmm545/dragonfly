@@ -5,8 +5,9 @@ import (
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/go-gl/mathgl/mgl64"
 	"github.com/google/uuid"
-	"golang.org/x/exp/maps"
 	"io"
+	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,9 +49,7 @@ type EntityHandle struct {
 	cond         *sync.Cond
 	worldless    *atomic.Bool
 	weakTxActive bool
-
-	lockedTx atomic.Pointer[Tx]
-	w        *World
+	w            *World
 
 	data EntityData
 
@@ -138,9 +137,11 @@ func (e *EntityHandle) UUID() uuid.UUID {
 }
 
 // Close closes the EntityHandle. Any subsequent call to ExecWorld will return
-// immediately without the transaction function being called.
-func (e *EntityHandle) Close(tx *Tx) {
-	e.setAndUnlockWorld(closeWorld, tx)
+// immediately without the transaction function being called. Close always
+// returns nil.
+func (e *EntityHandle) Close() error {
+	e.setAndUnlockWorld(closeWorld)
+	return nil
 }
 
 // ExecWorld obtains the EntityHandle's World in a thread-safe way and opens a
@@ -149,13 +150,14 @@ func (e *EntityHandle) Close(tx *Tx) {
 // run the transaction function once it is. If the Entity is closed before
 // ExecWorld is called, ExecWorld will return false immediately without running
 // the transaction function.
-func (e *EntityHandle) ExecWorld(f func(tx *Tx, e Entity)) (run bool) {
+func (e *EntityHandle) ExecWorld(f func(tx *Tx, e Entity)) bool {
 	return e.execWorld(f, false)
 }
 
 // execWorld uses a sync.Cond to synchronise access to the handler's world. We
-// are dealing with a rather complicated synchronisation pattern here.
-// The summary is as follows: The goal for ExecWorld is to block
+// are dealing with a rather complicated synchronisation pattern here. The goal
+// for ExecWorld is to block until e.w becomes accessible. Meanwhile, World.Exec
+// may also affect e.w, which execWorld needs to deal with.
 func (e *EntityHandle) execWorld(f func(tx *Tx, e Entity), weak bool) bool {
 	e.cond.L.Lock()
 	for e.w == nil || (!weak && e.weakTxActive) {
@@ -187,11 +189,7 @@ func (e *EntityHandle) execWorld(f func(tx *Tx, e Entity), weak bool) bool {
 	// transaction turns out to be invalidated (ret == false), we simply try
 	// again, this time with e.execWorld(f, true) to make this goroutine bypass
 	// any goroutines still awaiting e.cond.
-	ret := e.weakExec(func(tx *Tx) {
-		e.lockedTx.Store(tx)
-		f(tx, e.mustEntity(tx))
-		e.lockedTx.Store(nil)
-	})
+	ret := e.weakExec(func(tx *Tx) { f(tx, e.mustEntity(tx)) })
 	e.cond.L.Unlock()
 
 	if !ret {
@@ -240,24 +238,22 @@ func (e *EntityHandle) weakExec(f ExecFunc) bool {
 
 var closeWorld = &World{}
 
-func (e *EntityHandle) unsetAndLockWorld(tx *Tx) {
-	// If the entity is in a tx created using ExecWorld, e.cond.L will already
-	// be locked. Don't try to lock again in that case.
-	if e.lockedTx.Load() != tx {
-		e.cond.L.Lock()
-		defer e.cond.L.Unlock()
-	}
+// unsetAndLockWorld sets e.w to nil, causing any subsequent calls to ExecWorld
+// to block until e.w is set to a non-nil value.
+func (e *EntityHandle) unsetAndLockWorld() {
+	e.cond.L.Lock()
+	defer e.cond.L.Unlock()
+
 	e.worldless.Store(true)
 	e.w = nil
 }
 
-func (e *EntityHandle) setAndUnlockWorld(w *World, tx *Tx) {
-	// If the entity is in a tx created using ExecWorld, e.cond.L will already
-	// be locked. Don't try to lock again in that case.
-	if e.lockedTx.Load() != tx {
-		e.cond.L.Lock()
-		defer e.cond.L.Unlock()
-	}
+// setAndUnlockWorld sets e.w to a World passed and broadcasts e.cond, so that
+// any goroutines waiting for a non-nil world are awoken.
+func (e *EntityHandle) setAndUnlockWorld(w *World) {
+	e.cond.L.Lock()
+	defer e.cond.L.Unlock()
+
 	if e.w != nil {
 		panic("cannot add entity to new world before removing from old world")
 	}
@@ -370,7 +366,7 @@ type EntityRegistryConfig struct {
 	Arrow              func(opts EntitySpawnOpts, damage float64, owner Entity, critical, disallowPickup, obtainArrowOnPickup bool, punchLevel int, tip any) *EntityHandle
 	Egg                func(opts EntitySpawnOpts, owner Entity) *EntityHandle
 	EnderPearl         func(opts EntitySpawnOpts, owner Entity) *EntityHandle
-	Firework           func(opts EntitySpawnOpts, firework Item, owner Entity, attached bool) *EntityHandle
+	Firework           func(opts EntitySpawnOpts, firework Item, owner Entity, sidewaysVelocityMultiplier, upwardsAcceleration float64, attached bool) *EntityHandle
 	LingeringPotion    func(opts EntitySpawnOpts, t any, owner Entity) *EntityHandle
 	Snowball           func(opts EntitySpawnOpts, owner Entity) *EntityHandle
 	SplashPotion       func(opts EntitySpawnOpts, t any, owner Entity) *EntityHandle
@@ -405,7 +401,7 @@ func (reg EntityRegistry) Lookup(name string) (EntityType, bool) {
 
 // Types returns all EntityTypes passed upon construction of the EntityRegistry.
 func (reg EntityRegistry) Types() []EntityType {
-	return maps.Values(reg.ent)
+	return slices.Collect(maps.Values(reg.ent))
 }
 
 func readVec3(x map[string]any, k string) mgl64.Vec3 {

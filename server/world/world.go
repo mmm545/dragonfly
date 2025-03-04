@@ -4,23 +4,20 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"iter"
-	"math/rand"
-	"sync"
-	"time"
-
-	"github.com/df-mc/goleveldb/leveldb"
-
-	"slices"
-
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/event"
 	"github.com/df-mc/dragonfly/server/internal/sliceutil"
 	"github.com/df-mc/dragonfly/server/world/chunk"
+	"github.com/df-mc/goleveldb/leveldb"
 	"github.com/go-gl/mathgl/mgl64"
 	"github.com/google/uuid"
-	"golang.org/x/exp/maps"
+	"iter"
+	"maps"
+	"math/rand/v2"
+	"slices"
+	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // World implements a Minecraft world. It manages all aspects of what players
@@ -288,12 +285,17 @@ func (w *World) setBlock(pos cube.Pos, b Block, opts *SetOpts) {
 				secondLayer = air()
 				b = blockByRuntimeIDOrAir(li)
 			}
-		} else if liquidDisplacingBlocks[rid] && liquidBlocks[before] {
-			l := blockByRuntimeIDOrAir(before)
-			if b.(LiquidDisplacer).CanDisplace(l.(Liquid)) {
-				c.SetBlock(x, y, z, 1, before)
-				secondLayer = l
+		} else if liquidDisplacingBlocks[rid] {
+			if liquidBlocks[before] {
+				l := blockByRuntimeIDOrAir(before)
+				if b.(LiquidDisplacer).CanDisplace(l.(Liquid)) {
+					c.SetBlock(x, y, z, 1, before)
+					secondLayer = l
+				}
 			}
+		} else if li := c.Block(x, y, z, 1); li != airRID {
+			c.SetBlock(x, y, z, 1, airRID)
+			secondLayer = air()
 		}
 
 		if secondLayer != nil {
@@ -663,7 +665,7 @@ func (w *World) playSound(tx *Tx, pos mgl64.Vec3, s Sound) {
 // loaded. addEntity panics if the EntityHandle is already in a world.
 // addEntity returns the Entity created by the EntityHandle.
 func (w *World) addEntity(tx *Tx, handle *EntityHandle) Entity {
-	handle.setAndUnlockWorld(w, tx)
+	handle.setAndUnlockWorld(w)
 	pos := chunkPosFromVec3(handle.data.Pos)
 	w.entities[handle] = pos
 
@@ -699,7 +701,7 @@ func (w *World) removeEntity(e Entity, tx *Tx) *EntityHandle {
 		v.HideEntity(e)
 	}
 	delete(w.entities, handle)
-	handle.unsetAndLockWorld(tx)
+	handle.unsetAndLockWorld()
 	return handle
 }
 
