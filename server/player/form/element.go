@@ -9,8 +9,44 @@ import (
 // the element interface may be used as struct fields when passing the form structure to form.New().
 type Element interface {
 	json.Marshaler
-	ReadOnly() bool
 	elem()
+}
+
+// MenuElement represents an element that may be added to a Menu form. This includes buttons, dividers,
+// headers, and labels.
+type MenuElement interface {
+	json.Marshaler
+	menuElem()
+}
+
+// Divider represents a visual separator element on a form. It displays a horizontal line.
+type Divider struct{}
+
+// MarshalJSON ...
+func (d Divider) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"type": "divider",
+		"text": "",
+	})
+}
+
+// Header represents a header element on a form. It displays larger, emphasised text for section titles.
+type Header struct {
+	// Text is the text held by the header. The text may contain Minecraft formatting codes.
+	Text string
+}
+
+// NewHeader creates and returns a new Header with the text passed.
+func NewHeader(text string) Header {
+	return Header{Text: text}
+}
+
+// MarshalJSON ...
+func (h Header) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"type": "header",
+		"text": h.Text,
+	})
 }
 
 // Label represents a static label on a form. It serves only to display a box of text, and users cannot
@@ -33,10 +69,6 @@ func (l Label) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func (Label) ReadOnly() bool {
-	return true
-}
-
 // Input represents a text input box element. Submitters may write any text in these boxes with no specific
 // length.
 type Input struct {
@@ -48,6 +80,9 @@ type Input struct {
 	// Placeholder is the text displayed in the input box if it does not contain any text filled out by the
 	// user. The text may contain Minecraft formatting codes.
 	Placeholder string
+	// Tooltip is an optional text displayed when hovering over the element's info icon. The icon only
+	// appears when a tooltip is set.
+	Tooltip string
 
 	value string
 }
@@ -57,23 +92,29 @@ func NewInput(text, defaultValue, placeholder string) Input {
 	return Input{Text: text, Default: defaultValue, Placeholder: placeholder}
 }
 
+// WithTooltip returns a copy of the Input with the tooltip set.
+func (i Input) WithTooltip(tooltip string) Input {
+	i.Tooltip = tooltip
+	return i
+}
+
 // MarshalJSON ...
 func (i Input) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{
+	m := map[string]any{
 		"type":        "input",
 		"text":        i.Text,
 		"default":     i.Default,
 		"placeholder": i.Placeholder,
-	})
+	}
+	if i.Tooltip != "" {
+		m["tooltip"] = i.Tooltip
+	}
+	return json.Marshal(m)
 }
 
 // Value returns the value filled out by the user.
 func (i Input) Value() string {
 	return i.value
-}
-
-func (Input) ReadOnly() bool {
-	return false
 }
 
 // Toggle represents an on-off button element. Submitters may either toggle this on or off, which will then
@@ -83,6 +124,9 @@ type Toggle struct {
 	Text string
 	// Default determines if the toggle should be on/off by default.
 	Default bool
+	// Tooltip is an optional text displayed when hovering over the element's info icon. The icon only
+	// appears when a tooltip is set.
+	Tooltip string
 
 	value bool
 }
@@ -92,22 +136,28 @@ func NewToggle(text string, defaultValue bool) Toggle {
 	return Toggle{Text: text, Default: defaultValue}
 }
 
+// WithTooltip returns a copy of the Toggle with the tooltip set.
+func (t Toggle) WithTooltip(tooltip string) Toggle {
+	t.Tooltip = tooltip
+	return t
+}
+
 // MarshalJSON ...
 func (t Toggle) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{
+	m := map[string]any{
 		"type":    "toggle",
 		"text":    t.Text,
 		"default": t.Default,
-	})
+	}
+	if t.Tooltip != "" {
+		m["tooltip"] = t.Tooltip
+	}
+	return json.Marshal(m)
 }
 
 // Value returns the value filled out by the user.
 func (t Toggle) Value() bool {
 	return t.value
-}
-
-func (Toggle) ReadOnly() bool {
-	return false
 }
 
 // Slider represents a slider element. Submitters may move the slider to values within the range of the slider
@@ -123,6 +173,9 @@ type Slider struct {
 	StepSize float64
 	// Default is the default value filled out for the slider.
 	Default float64
+	// Tooltip is an optional text displayed when hovering over the element's info icon. The icon only
+	// appears when a tooltip is set.
+	Tooltip string
 
 	value float64
 }
@@ -132,25 +185,31 @@ func NewSlider(text string, min, max, stepSize, defaultValue float64) Slider {
 	return Slider{Text: text, Min: min, Max: max, StepSize: stepSize, Default: defaultValue}
 }
 
+// WithTooltip returns a copy of the Slider with the tooltip set.
+func (s Slider) WithTooltip(tooltip string) Slider {
+	s.Tooltip = tooltip
+	return s
+}
+
 // MarshalJSON ...
 func (s Slider) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{
+	m := map[string]any{
 		"type":    "slider",
 		"text":    s.Text,
 		"min":     s.Min,
 		"max":     s.Max,
 		"step":    s.StepSize,
 		"default": s.Default,
-	})
+	}
+	if s.Tooltip != "" {
+		m["tooltip"] = s.Tooltip
+	}
+	return json.Marshal(m)
 }
 
 // Value returns the value filled out by the user.
 func (s Slider) Value() float64 {
 	return s.value
-}
-
-func (Slider) ReadOnly() bool {
-	return false
 }
 
 // Dropdown represents a dropdown which, when clicked, opens a window with the options set in the Options
@@ -164,6 +223,9 @@ type Dropdown struct {
 	// DefaultIndex is the index in the Options slice that is used as default. When sent to a Submitter, the
 	// value at this index in the Options slice will be selected.
 	DefaultIndex int
+	// Tooltip is an optional text displayed when hovering over the element's info icon. The icon only
+	// appears when a tooltip is set.
+	Tooltip string
 
 	value int
 }
@@ -173,24 +235,30 @@ func NewDropdown(text string, options []string, defaultIndex int) Dropdown {
 	return Dropdown{Text: text, Options: options, DefaultIndex: defaultIndex}
 }
 
+// WithTooltip returns a copy of the Dropdown with the tooltip set.
+func (d Dropdown) WithTooltip(tooltip string) Dropdown {
+	d.Tooltip = tooltip
+	return d
+}
+
 // MarshalJSON ...
 func (d Dropdown) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{
+	m := map[string]any{
 		"type":    "dropdown",
 		"text":    d.Text,
 		"default": d.DefaultIndex,
 		"options": d.Options,
-	})
+	}
+	if d.Tooltip != "" {
+		m["tooltip"] = d.Tooltip
+	}
+	return json.Marshal(m)
 }
 
 // Value returns the value that the Submitter submitted. The value is an index pointing to the selected option
 // in the Options slice.
 func (d Dropdown) Value() int {
 	return d.value
-}
-
-func (Dropdown) ReadOnly() bool {
-	return false
 }
 
 // StepSlider represents a slider that has a number of options that may be selected. It is essentially a
@@ -202,24 +270,30 @@ func NewStepSlider(text string, options []string, defaultIndex int) StepSlider {
 	return StepSlider{Text: text, Options: options, DefaultIndex: defaultIndex}
 }
 
+// WithTooltip returns a copy of the StepSlider with the tooltip set.
+func (s StepSlider) WithTooltip(tooltip string) StepSlider {
+	s.Tooltip = tooltip
+	return s
+}
+
 // MarshalJSON ...
 func (s StepSlider) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{
+	m := map[string]any{
 		"type":    "step_slider",
 		"text":    s.Text,
 		"default": s.DefaultIndex,
 		"steps":   s.Options,
-	})
+	}
+	if s.Tooltip != "" {
+		m["tooltip"] = s.Tooltip
+	}
+	return json.Marshal(m)
 }
 
 // Value returns the value that the Submitter submitted. The value is an index pointing to the selected option
 // in the Options slice.
 func (s StepSlider) Value() int {
 	return s.value
-}
-
-func (StepSlider) ReadOnly() bool {
-	return false
 }
 
 // Button represents a button added to a Menu or Modal form. The button has text on it and an optional image,
@@ -241,7 +315,10 @@ func NewButton(text, image string) Button {
 
 // MarshalJSON ...
 func (b Button) MarshalJSON() ([]byte, error) {
-	m := map[string]any{"text": b.Text}
+	m := map[string]any{
+		"type": "button",
+		"text": b.Text,
+	}
 	if b.Image != "" {
 		buttonType := "path"
 		if strings.HasPrefix(b.Image, "http:") || strings.HasPrefix(b.Image, "https:") {
@@ -252,9 +329,16 @@ func (b Button) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
+func (Divider) elem()    {}
+func (Header) elem()     {}
 func (Label) elem()      {}
 func (Input) elem()      {}
 func (Toggle) elem()     {}
 func (Slider) elem()     {}
 func (Dropdown) elem()   {}
 func (StepSlider) elem() {}
+
+func (Divider) menuElem() {}
+func (Header) menuElem()  {}
+func (Label) menuElem()   {}
+func (Button) menuElem()  {}
